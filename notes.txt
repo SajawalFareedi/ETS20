@@ -1,0 +1,11 @@
+IDEA:
+    Develop a bot which will buy newly launched tokens on Uniswap and sell them with 3x profit.
+
+REQUIREMENTS:
+    Flashbots RPC
+    Token Sniffer API   - 90% Weight
+    Quick Intel API     - 60% Weight
+    GoPlus API          - 80% Weight
+
+DEV LOGIC:
+    Connect with the RPC and monitor new Events on Uniswap smart contract. If there's any launch event then get the tokens from it and Scan that token using Token Scanners. If the token is safe then send requests to RPC for buying that token worth $50 and set a fees of $20 MAX. Once the token's price goes up, 3x at least, then quickly send the selling requests and sell it. There will be taxes on buying/selling. Make sure they are less than 10% while buying/selling.
