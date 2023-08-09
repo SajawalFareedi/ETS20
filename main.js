@@ -1,3 +1,4 @@
+const fs = require("fs");
 const ethers = require("ethers");
 const axios = require("axios").default;
 const puppeteer = require("puppeteer-extra").default;
@@ -50,11 +51,12 @@ const doTokenSnifferScan = async (token) => {
     await page.goto(`https://tokensniffer.com/token/eth/${token}`, { waitUntil: "networkidle0" });
     await page.waitForSelector("table tbody h2 span", { timeout: 0 });
 
-    const score = await page.$eval("table tbody h2 span", el => el.textContent);
+    let score = await page.$eval("table tbody h2 span", el => el.textContent);
+    score = parseInt(score.split("/")[0]);
 
-    log("TokenSniffer", `Score is ${parseInt(score.split("/")[0])}`);
+    log("TokenSniffer", `Score is ${score}`);
 
-    return (parseInt(score.split("/")[0]) >= TOKENSNIFFER_MIN_SR) ? true : false;
+    return { success: (score >= TOKENSNIFFER_MIN_SR) ? true : false, score };
 };
 
 const doGoPlusScan = async (token) => {
@@ -76,9 +78,6 @@ const doGoPlusScan = async (token) => {
 
     };
 
-    // let res, data = {};
-
-    // if (!isScanned) {
     const res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
     
     const keys = [
@@ -113,12 +112,6 @@ const doGoPlusScan = async (token) => {
 
     if (res.status == 200) {
         const data = res.data.result[token];
-        
-        // console.log(data)
-
-        // } else {
-        //     data = _data;
-        // }
 
         for (let i = 0; i < keys.length; i++) {
             const key = keys[i];
@@ -145,7 +138,6 @@ const doGoPlusScan = async (token) => {
             } else if (["sell_tax", "buy_tax", "owner_percent", "creator_percent"].includes(_key)) {
                 score = parseFloat(data[_key]) <= parseFloat(key[_key]) ? score + 1 : score;
             } else {
-                // console.log(_key, data[_key], key[_key], data[_key] == key[_key])
                 if (data[_key] == key[_key]) {
                     score += 1
                 }
@@ -154,74 +146,41 @@ const doGoPlusScan = async (token) => {
         }
     }
 
-    log("GoPlus", `Score is ${(score / 25) * 100}`);
+    score = (score / keys.length) * 100;
 
-    return ((score / 25) * 100) >= GOPLUS_MIN_SR ? true : false;
+    log("GoPlus", `Score is ${score}`);
+
+    return { success: score >= GOPLUS_MIN_SR ? true : false, score };
 };
 
 const doQuickIntelScan = async (token) => {
 
     log("Quick Intel", "Scanning Started");
 
-    // const headers = {
-    //     authority: "www.dextools.io",
-    //     Accept: "application/json, text/plain, */*",
-    //     "Accept-Language": "en-US,en;q=0.9",
-    //     "Content-Type": "application/json",
-    //     "Cookie": "__cf_bm=OaFNKPKtSc0jgQ.svSBSIT08ZJ2r0Y9j0zJ.y66Ak4-1691505613-0-AQ62gH60voDlUmMOl/uWtT5JPZ1uOJszBiVxEIh49VA+RFNy20ylZe3JoNWOKU0T3p0WVThEB0FAj31TTuRZ9Oo=; cf_clearance=VwM3FAS_gykkGvGNY_1UPwDmjMBIWWFdgmeO7wRq8CM-1691506204-0-1-9a8d69fd.d898ccc3.f9afc5c9-0.2.1691506204",
-    //     Dnt: "1",
-    //     Referer: `https://www.dextools.io/widget-chart/en/ether/pe-light/${token}?theme=dark&chartType=1&chartResolution=30&drawingToolbars=false`,
-    //     "Sec-Ch-Ua": '"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"',
-    //     "Sec-Ch-Ua-Mobile": "?0",
-    //     "Sec-Ch-Ua-Platform": '"Windows"',
-    //     "Sec-Fetch-Dest": "empty",
-    //     "Sec-Fetch-Mode": "cors",
-    //     "Sec-Fetch-Site": "same-origin",
-    //     "Sec-Fetch-User": "?1",
-    //     "Upgrade-Insecure-Requests": "1",
-    //     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-
-    // };
-
-    // const res = await axios.get(`https://www.dextools.io/shared/data/pair?address=${token}&chain=ether&audit=false&locks=false`, { headers: headers })
-    //     .catch((e) => { console.error(e) });
-
-    let goPlusResult;
-    let tokenSnifferResult;
-
-    // if (res.status == 200) {
-    //     const scans = res.data.data[0].token.audit.external;
-    //     const keys = Object.keys(scans);
-
-    //     if (keys.includes("goplus")) {
-    //         goPlusResult = await doGoPlusScan(token, true, scans.goplus);
-    //     } else {
-    //         goPlusResult = await doGoPlusScan(token, false, {});
-    //     }
-
-    //     if (keys.includes("tokensniffer")) {
-    //         tokenSnifferResult = scans.tokensniffer.score >= TOKENSNIFFER_MIN_SR ? true : false;
-    //     } else {
-    //         await initBrowser();
-    //         tokenSnifferResult = await doTokenSnifferScan(token);
-    //     }
-
-    // } else {
-    await initBrowser();
-
-    [goPlusResult, tokenSnifferResult] = await Promise.allSettled([
+    const [goPlusResult, tokenSnifferResult] = await Promise.allSettled([
         doGoPlusScan(token),
         doTokenSnifferScan(token)
     ]);
-    // }
 
-    const success = (goPlusResult.value && tokenSnifferResult.value) ? true : false;
-    success ? log("Quick Intel", "Token is safe! Preparing Buy Tx!") : log("Quick Intel", "Token is not safe");
+    const success = (goPlusResult.value.success && tokenSnifferResult.value.success) ? true : false;
+    success ? log("Quick Intel", "Token is safe!") : log("Quick Intel", "Token is not safe");
 
-    return success;
+    console.log({ success, goPlusScore: goPlusResult.value.score, tokenSnifferScore: tokenSnifferResult.value.score });
+    return { success, goPlusScore: goPlusResult.value.score, tokenSnifferScore: tokenSnifferResult.value.score };
+};
+
+const saveNewToken = (filename, data) => {
+    let _data = JSON.parse(fs.readFileSync(filename, { encoding: "utf8" }));
+
+    _data.push(data);
+
+    fs.writeFileSync(filename, JSON.stringify(_data), { encoding: "utf8" });
 };
 
 (async () => {
+
+    await initBrowser();
+
     const factoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
     const provider = new ethers.providers.WebSocketProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
     const tokenContract = new ethers.Contract(factoryAddress, ABI, provider);
@@ -231,18 +190,15 @@ const doQuickIntelScan = async (token) => {
 
         if (txData.data == "0xc9567bf9") {
             const token = token1.toLowerCase().endsWith("83c756cc2") ? token0 : token1;
+
             log("PairCreated", token);
 
-            const isSafeToken = await doQuickIntelScan(token);
+            const { success, goPlusScore, tokenSnifferScore } = await doQuickIntelScan(token);
 
-            if (isSafeToken) {
-                //...
-            };
+            saveNewToken("tokens.json", { success, token, goPlusScore, tokenSnifferScore });
         };
     });
-});
+})();
+
 
 // doQuickIntelScan("0xe3ef7906b99521cc525bc1b8a181a621eaf5f452");
-// doGoPlusScan("0xe3ef7906b99521cc525bc1b8a181a621eaf5f452");
-// initBrowser().then(async () => { const r = await doTokenSnifferScan("0xe3ef7906b99521cc525bc1b8a181a621eaf5f452"); console.log(r); });
-doQuickIntelScan("0xe3ef7906b99521cc525bc1b8a181a621eaf5f452");
