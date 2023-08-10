@@ -13,6 +13,7 @@ let browser;
 let page;
 
 const initBrowser = async () => {
+    log("Sniper", "Initializing Browser");
     browser = await puppeteer.launch({
         timeout: 0,
         slowMo: 50,
@@ -44,129 +45,152 @@ const initBrowser = async () => {
 
 const log = (func, msg) => {
     const time = new Date().toLocaleString();
-    console.log(`[${time}] [${func}] - ${msg}`);
+
+    if (func.length == 0) {
+        console.log("");
+    } else {
+        console.log(`[${time}] [${func}] - ${msg}`);
+    }
 };
 
 const doTokenSnifferScan = async (token) => {
-    await page.goto(`https://tokensniffer.com/token/eth/${token}`, { waitUntil: "networkidle0" });
-    await page.waitForSelector("table tbody h2 span", { timeout: 0 });
+    try {
+        await page.goto(`https://tokensniffer.com/token/eth/${token}`, { waitUntil: "networkidle0" });
+        await page.waitForSelector("table tbody h2 span", { timeout: 0 });
 
-    let score = await page.$eval("table tbody h2 span", el => el.textContent);
-    score = parseInt(score.split("/")[0]);
+        let score = await page.$eval("table tbody h2 span", el => el.textContent);
+        score = parseInt(score.split("/")[0]);
 
-    log("TokenSniffer", `Score is ${score}`);
+        // log("TokenSniffer", `Score is ${score}`);
 
-    return { success: (score >= TOKENSNIFFER_MIN_SR) ? true : false, score };
+        return { success: (score >= TOKENSNIFFER_MIN_SR) ? true : false, score };
+    } catch (error) {
+        log("Sniper - TokenSniffer", error);
+    }
+
+    return { success: false, score: 0 };
 };
 
 const doGoPlusScan = async (token) => {
-    const headers = {
-        authority: "api.gopluslabs.io",
-        Accept: "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        Dnt: "1",
-        Referer: "https://gopluslabs.io/",
-        "Sec-Ch-Ua": '"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    try {
+        const headers = {
+            authority: "api.gopluslabs.io",
+            Accept: "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            Dnt: "1",
+            Referer: "https://gopluslabs.io/",
+            "Sec-Ch-Ua": '"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
 
-    };
+        };
 
-    const res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
-    
-    const keys = [
-        { "anti_whale_modifiable": "0" },
-        { "buy_tax": "0.1" },
-        { "can_take_back_ownership": "0" },
-        { "cannot_buy": "0" },
-        { "cannot_sell_all": "0" },
-        { "creator_percent": "0.05" },
-        { "external_call": "0" },
-        { "hidden_owner": "0" },
-        { "honeypot_with_same_creator": "0" },
-        { "is_anti_whale": "0" },
-        { "is_blacklisted": "0" },
-        { "is_honeypot": "0" },
-        { "is_in_dex": "1" },
-        { "is_mintable": "0" },
-        { "is_open_source": "1" },
-        { "is_proxy": "0" },
-        { "is_whitelisted": "0" },
-        { "liq_locked": "0.95" },
-        { "owner_percent": "0.05" },
-        { "personal_slippage_modifiable": "0" },
-        { "selfdestruct": "0" },
-        { "sell_tax": "0.1" },
-        { "slippage_modifiable": "0" },
-        { "trading_cooldown": "0" },
-        { "transfer_pausable": "0" }
-    ];
+        const res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
 
-    let score = 0;
+        const keys = [
+            { "anti_whale_modifiable": "0" },
+            { "buy_tax": "0.1" },
+            { "can_take_back_ownership": "0" },
+            { "cannot_buy": "0" },
+            { "cannot_sell_all": "0" },
+            { "creator_percent": "0.05" },
+            { "external_call": "0" },
+            { "hidden_owner": "0" },
+            { "honeypot_with_same_creator": "0" },
+            { "is_anti_whale": "0" },
+            { "is_blacklisted": "0" },
+            { "is_honeypot": "0" },
+            { "is_in_dex": "1" },
+            { "is_mintable": "0" },
+            { "is_open_source": "1" },
+            { "is_proxy": "0" },
+            { "is_whitelisted": "0" },
+            { "liq_locked": "0.95" },
+            { "owner_percent": "0.05" },
+            { "personal_slippage_modifiable": "0" },
+            { "selfdestruct": "0" },
+            { "sell_tax": "0.1" },
+            { "slippage_modifiable": "0" },
+            { "trading_cooldown": "0" },
+            { "transfer_pausable": "0" }
+        ];
 
-    if (res.status == 200) {
-        const data = res.data.result[token];
+        let score = 0;
 
-        for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            const _key = Object.keys(key)[0]
+        if (res.status == 200) {
+            const data = res.data.result[token];
 
-            if (_key == "liq_locked") {
-                if (data.lp_holders) {
-                    let totalHoldings = 0;
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i];
+                const _key = Object.keys(key)[0]
 
-                    for (let x = 0; x < data.lp_holders.length; x++) {
-                        const holder = data.lp_holders[x];
-                        const eligibleHolders = ["0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000dead"];
+                if (_key == "liq_locked") {
+                    if (data.lp_holders) {
+                        let totalHoldings = 0;
 
-                        if (eligibleHolders.includes(holder.address.toLowerCase()) && holder.is_locked == 1) {
-                            totalHoldings += parseFloat(holder.percent)
+                        for (let x = 0; x < data.lp_holders.length; x++) {
+                            const holder = data.lp_holders[x];
+                            const eligibleHolders = ["0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000dead"];
+
+                            if (eligibleHolders.includes(holder.address.toLowerCase()) && holder.is_locked == 1) {
+                                totalHoldings += parseFloat(holder.percent)
+                            }
+                        }
+
+                        if (totalHoldings >= 0.95) {
+                            score += 1
                         }
                     }
 
-                    if (totalHoldings >= 0.95) {
+                } else if (["sell_tax", "buy_tax", "owner_percent", "creator_percent"].includes(_key)) {
+                    score = parseFloat(data[_key]) <= parseFloat(key[_key]) ? score + 1 : score;
+                } else {
+                    if (data[_key] == key[_key]) {
                         score += 1
                     }
                 }
 
-            } else if (["sell_tax", "buy_tax", "owner_percent", "creator_percent"].includes(_key)) {
-                score = parseFloat(data[_key]) <= parseFloat(key[_key]) ? score + 1 : score;
-            } else {
-                if (data[_key] == key[_key]) {
-                    score += 1
-                }
             }
-
         }
+
+        score = (score / keys.length) * 100;
+
+        // log("GoPlus", `Score is ${score}`);
+
+        return { success: score >= GOPLUS_MIN_SR ? true : false, score };
+    } catch (error) {
+        log("Sniper - GoPlus", error);
     }
 
-    score = (score / keys.length) * 100;
-
-    log("GoPlus", `Score is ${score}`);
-
-    return { success: score >= GOPLUS_MIN_SR ? true : false, score };
+    return { success: false, score: 0 };
 };
 
 const doQuickIntelScan = async (token) => {
+    try {
+        log("Sniper", "Scanning Started");
 
-    log("Quick Intel", "Scanning Started");
+        const [goPlusResult, tokenSnifferResult] = await Promise.allSettled([
+            doGoPlusScan(token),
+            doTokenSnifferScan(token)
+        ]);
 
-    const [goPlusResult, tokenSnifferResult] = await Promise.allSettled([
-        doGoPlusScan(token),
-        doTokenSnifferScan(token)
-    ]);
+        const scores = `Scores: ${ goPlusResult.value.score } | ${ tokenSnifferResult.value.score }`
+        const success = (goPlusResult.value.success && tokenSnifferResult.value.success) ? true : false;
+        success ? log("Sniper", `Token is safe - ${scores}`) : log("Sniper", `Token is not safe - ${scores}`);
+        log("", "")
 
-    const success = (goPlusResult.value.success && tokenSnifferResult.value.success) ? true : false;
-    success ? log("Quick Intel", "Token is safe!") : log("Quick Intel", "Token is not safe");
+        return { success, goPlusScore: goPlusResult.value.score, tokenSnifferScore: tokenSnifferResult.value.score };
+    } catch (error) {
+        log("Sniper - QuickIntel", error);
+    }
 
-    console.log({ success, goPlusScore: goPlusResult.value.score, tokenSnifferScore: tokenSnifferResult.value.score });
-    return { success, goPlusScore: goPlusResult.value.score, tokenSnifferScore: tokenSnifferResult.value.score };
+    return { success: false, goPlusScore: 0, tokenSnifferScore: 0 };
 };
 
 const saveNewToken = (filename, data) => {
@@ -179,19 +203,23 @@ const saveNewToken = (filename, data) => {
 
 (async () => {
 
+    log("Sniper", "Starting the Bot");
+
     await initBrowser();
 
     const factoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
     const provider = new ethers.providers.WebSocketProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
     const tokenContract = new ethers.Contract(factoryAddress, ABI, provider);
 
+    log("Sniper", "Listenings to Events");
+    log("", "");
     tokenContract.on("PairCreated", async (token0, token1, pair, noname, tx) => {
         const txData = await provider.getTransaction(tx.transactionHash);
 
-        if (txData.data == "0xc9567bf9") {
-            const token = token1.toLowerCase().endsWith("83c756cc2") ? token0 : token1;
+        if (txData.data == "0xc9567bf9" || txData.data == "0x02ac8168") {
+            const token = token1.toLowerCase().endsWith("83c756cc2") ? token0.toLowerCase() : token1.toLowerCase();
 
-            log("PairCreated", token);
+            log("Sniper", "PairCreated: " + token);
 
             const { success, goPlusScore, tokenSnifferScore } = await doQuickIntelScan(token);
 
@@ -201,4 +229,4 @@ const saveNewToken = (filename, data) => {
 })();
 
 
-// doQuickIntelScan("0xe3ef7906b99521cc525bc1b8a181a621eaf5f452");
+// initBrowser().then(async () => { const result = await doQuickIntelScan("0x32f12ba278b75179397b1b63ab2a6a3904da498e"); console.log(result) });
