@@ -9,6 +9,20 @@ REQUIREMENTS:
 
 DEV LOGIC:
     Connect with the RPC and monitor new Events on Uniswap smart contract. If there's any launch event then get the tokens from it and Scan that token using Token Scanners. If the token is safe then send requests to RPC for buying that token worth $50 and set a fees of $20 MAX. Once the token's price goes up, 3x at least, then quickly send the selling requests and sell it. There will be taxes on buying/selling. Make sure they are less than 10% while buying/selling.
+    
+    -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+
+    Buy the token and start scaning it after that. Repeat the scans until you get the real result and take an action based on result. Actions:
+        
+        Tax Modifiable -> sell
+        Liquidity not locked -> sell
+        Creator or Owner has very large chunk of tokens -> sell
+        Rest -> Hold until 5x
+    
+    -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+
+    
+
 
 
 ----- skills
