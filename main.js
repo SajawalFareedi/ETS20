@@ -1,8 +1,6 @@
 const fs = require("fs");
 const ethers = require("ethers");
 const axios = require("axios").default;
-const puppeteer = require("puppeteer-extra").default;
-puppeteer.use(require("puppeteer-extra-plugin-stealth")());
 const { log, sleep, saveNewToken } = require("./utils/utils");
 
 const ABI = require("./factoryABI.json");

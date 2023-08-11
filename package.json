@@ -1,15 +1,20 @@
 {
+  "name": "ers20",
+  "private": true,
+  "author": {
+    "name": "Sajawal Fareedi",
+    "url": "https://github.com/SajawalFareedi/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SajawalFareedi/ETS20"
+  },
   "scripts": {
     "start": "node main.js"
   },
   "dependencies": {
     "@flashbots/ethers-provider-bundle": "^0.6.2",
-    "@moralisweb3/common-evm-utils": "^2.22.4",
     "axios": "^1.4.0",
-    "ethers": "5.7.2",
-    "moralis": "^2.22.4",
-    "puppeteer": "^21.0.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "ethers": "5.7.2"
   }
 }
