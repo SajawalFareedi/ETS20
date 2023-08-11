@@ -30,7 +30,24 @@ const doGoPlusScan = async (token) => {
 
         };
 
-        const res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
+        let res;
+        let x = 0;
+
+        while (true) {
+            try {
+                res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
+                if (res.data.result[token].buy_tax.length !== 0 || x == 1) {
+                    break;
+                }
+
+                await sleep(2);
+
+                x += 1;
+            } catch (error) {
+
+            }
+        }
+
         const keys = JSON.parse(fs.readFileSync("keys.json", { encoding: "utf8" }));
 
         let score = 0;
@@ -78,7 +95,7 @@ const doGoPlusScan = async (token) => {
         }
 
         score = (score / (keys.length - 5)) * 100;
-        vip_score = (vip_points / 5) * 100
+        vip_score = (vip_points / 5) * 100;
 
         return { success: (score >= GOPLUS_MIN_SR && vip_score >= GOPLUS_MIN_SR) ? true : false, score, vip_score };
 
@@ -115,25 +132,27 @@ const doIsHoneyPotScan = async (token) => {
             try {
                 const res = await axios.get(`https://api.honeypot.is/v2/IsHoneypot?address=${token}&chainID=1`, { headers: headers });
 
-                if (res.status == 200) {
+                if (res.status == 200 && res.data.simulationSuccess) {
                     data = res.data;
                     break;
                 }
+
             } catch (error) { };
         };
 
-        if (data.simulationSuccess) {
-            const isHoneypot = data.honeypotResult.isHoneypot;
-            const buyTax = data.simulationResult.buyTax;
-            const sellTax = data.simulationResult.sellTax;
-            const transferTax = data.simulationResult.transferTax;
-            const maxBuy = data.simulationResult?.maxBuy?.withToken;
-            const buyGas = parseInt(data.simulationResult.buyGas);
+        const isHoneypot = data.honeypotResult.isHoneypot;
+        const buyTax = data.simulationResult.buyTax;
+        const sellTax = data.simulationResult.sellTax;
+        const transferTax = data.simulationResult.transferTax;
+        const maxBuy = data.simulationResult?.maxBuy?.withToken;
+        const buyGas = parseInt(data.simulationResult.buyGas);
 
-            if (!isHoneypot && buyTax <= MAX_TAX && sellTax <= MAX_TAX && transferTax <= MAX_TAX) {
-                return { success: true, data: { maxBuy: maxBuy ? maxBuy.toFixed(3) : 0, buyGas } };
-            };
+        if (!isHoneypot && buyTax <= MAX_TAX && sellTax <= MAX_TAX && transferTax <= MAX_TAX) {
+            return { success: true, data: { maxBuy: maxBuy ? maxBuy.toFixed(3) : 0, buyGas } };
         };
+
+        return { success: false, status: "taxes are high!" };
+
 
     } catch (error) {
         log("Sniper - HoneyPot", error);
@@ -146,20 +165,34 @@ const isTokenSafe = async (token) => {
     try {
         log("Sniper", "Scanning Started");
 
-        const [goPlusResult, isHoneyPotResult] = await Promise.allSettled([
-            doGoPlusScan(token),
-            doIsHoneyPotScan(token)
-        ]);
+        const goPlusResult = await doGoPlusScan(token);
+        const isHoneyPotResult = await doIsHoneyPotScan(token);
 
-        if (goPlusResult.status == "fulfilled" && isHoneyPotResult.status == "fulfilled") {
-            return { success: (goPlusResult.value.success && isHoneyPotResult.value.success) ? true : false, data: { ...isHoneyPotResult.value.data, ...goPlusResult.value } };
-        };
+        return { success: (goPlusResult.success && isHoneyPotResult.success) ? true : false, data: { honeypot: { success: isHoneyPotResult.success, ...isHoneyPotResult.data }, goplus: { ...goPlusResult } } };
 
     } catch (error) {
         log("Sniper - isTokenSafe", error);
     };
 
-    return { success: false };
+    return { success: false, data: {} };
+};
+
+const handleNewToken = async (token0, token1, tx, provider, creationMethods, tokenContract) => {
+    const { data } = await provider.getTransaction(tx.transactionHash);
+
+    if (creationMethods.includes(data)) {
+        const token = token1.toLowerCase().endsWith("83c756cc2") ? token0.toLowerCase() : token1.toLowerCase();
+
+        log("Sniper", "PairCreated: " + token);
+
+        await sleep(5);
+        const { success, data } = await isTokenSafe(token);
+
+        console.log(token, data);
+
+        const time = new Date().toLocaleString();
+        saveNewToken(`token.json`, { time, token, ...data });
+    };
 };
 
 (async () => {
@@ -168,40 +201,17 @@ const isTokenSafe = async (token) => {
     const factoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
     const provider = new ethers.providers.WebSocketProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
     const tokenContract = new ethers.Contract(factoryAddress, ABI, provider);
+    const creationMethods = ["0xc9567bf9", "0x02ac8168"]
 
     log("Sniper", "Listenings to Events");
     log("", "");
 
-    let buy = true;
-    tokenContract.on("PairCreated", async (token0, token1, pair, noname, tx) => {
-        const txData = await provider.getTransaction(tx.transactionHash);
-
-        if (txData.data == "0xc9567bf9" || txData.data == "0x02ac8168") {
-            const token = token1.toLowerCase().endsWith("83c756cc2") ? token0.toLowerCase() : token1.toLowerCase();
-
-            if (buy) {
-                // buy = false;
-                log("Sniper", "PairCreated: " + token);
-
-                await sleep(5);
-                const { success, data } = await isTokenSafe(token);
-
-                const time = new Date().toLocaleString();
-
-                saveNewToken(`token.json`, { time, success, data });
-
-                // if (success) {
-                //     data
-                // } else {
-                //     buy = true;
-                // };
-            }
-        };
+    tokenContract.on("PairCreated", (token0, token1, pair, noname, tx) => {
+        handleNewToken(token0, token1, tx, provider, creationMethods, tokenContract);
     });
 })();
 
-const token = "0x09be0b9278abd1b10cebbd3dacb55dc39fc23aa3";
-
+// const token = "0x2f4b45aa97f475ddbd46923903a6d1939a5da977";
 // doIsHoneyPotScan(token).then(async (data) => {
 //     console.log(data);
 
@@ -210,4 +220,6 @@ const token = "0x09be0b9278abd1b10cebbd3dacb55dc39fc23aa3";
 // });
 
 // isTokenSafe(token).then((d) => { console.log(d) });
+
+// doGoPlusScan("0xc922edf376db7542846f91c94436ed479131f627").then((d) => { console.log(d) });
 
