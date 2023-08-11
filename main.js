@@ -6,11 +6,12 @@ puppeteer.use(require("puppeteer-extra-plugin-stealth")());
 const { log, sleep, saveNewToken } = require("./utils/utils");
 
 const ABI = require("./factoryABI.json");
-const GOPLUS_MIN_SR = 80;
+const GOPLUS_MIN_VP = 80;
+const GOPLUS_MIN_SR = 85;
 const MAX_TAX = 10
 
 
-const doGoPlusScan = async (token) => {
+const doGoPlusScan = async (token, notHoneypot) => {
     try {
         const headers = {
             authority: "api.gopluslabs.io",
@@ -36,11 +37,12 @@ const doGoPlusScan = async (token) => {
         while (true) {
             try {
                 res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
-                if (res.data.result[token].buy_tax.length !== 0 || x == 1) {
+
+                if (res.data.result[token].buy_tax.length !== 0 || x >= 3) {
                     break;
                 }
 
-                await sleep(2);
+                await sleep(1);
 
                 x += 1;
             } catch (error) {
@@ -84,20 +86,41 @@ const doGoPlusScan = async (token) => {
                         }
                     }
 
-                } else if (["sell_tax", "buy_tax", "owner_percent", "creator_percent"].includes(_key)) {
-                    vip_points = parseFloat(data[_key]) <= parseFloat(key[_key]) ? vip_points + 1 : vip_points;
+                } else if (["sell_tax", "buy_tax"].includes(_key)) {
+
+                    if (parseFloat(data[_key]) <= 0.1) {
+                        vip_points += 1
+                    }
+
+                } else if (["owner_percent", "creator_percent"].includes(_key)) {
+
+                    if (parseFloat(data[_key]) <= 0.05) {
+                        vip_points += 1
+                    }
+                    
+                } else if (_key === "slippage_modifiable") {
+
+                    if (data[_key] === "0") {
+                        vip_points += 1
+                    }
+
                 } else {
-                    if (data[_key] == key[_key]) {
+
+                    if (String(data[_key]) === String(key[_key])) {
                         score += 1
                     }
                 }
             }
         }
 
-        score = (score / (keys.length - 5)) * 100;
-        vip_score = (vip_points / 5) * 100;
+        score = (score / (keys.length - 6)) * 100;
+        vip_score = (vip_points / 6) * 100;
 
-        return { success: (score >= GOPLUS_MIN_SR && vip_score >= GOPLUS_MIN_SR) ? true : false, score, vip_score };
+        // if (notHoneypot && vip_score < 40) {
+        //     return await doGoPlusScan(token, notHoneypot);
+        // }
+
+        return { success: (score >= GOPLUS_MIN_SR && vip_score >= GOPLUS_MIN_VP) ? true : false, score: parseInt(score), vip_score: parseInt(vip_score) };
 
     } catch (error) {
         log("Sniper - GoPlus", error);
@@ -127,6 +150,7 @@ const doIsHoneyPotScan = async (token) => {
         };
 
         let data;
+        let x = 0
 
         while (true) {
             try {
@@ -137,22 +161,29 @@ const doIsHoneyPotScan = async (token) => {
                     break;
                 }
 
+                if (x >= 10) {
+                    break;
+                }
+
+                x += 1
+
             } catch (error) { };
         };
 
-        const isHoneypot = data.honeypotResult.isHoneypot;
-        const buyTax = data.simulationResult.buyTax;
-        const sellTax = data.simulationResult.sellTax;
-        const transferTax = data.simulationResult.transferTax;
-        const maxBuy = data.simulationResult?.maxBuy?.withToken;
-        const buyGas = parseInt(data.simulationResult.buyGas);
+        if (data) {
+            const isHoneypot = data.honeypotResult.isHoneypot;
+            const buyTax = data.simulationResult.buyTax;
+            const sellTax = data.simulationResult.sellTax;
+            const transferTax = data.simulationResult.transferTax;
+            const maxBuy = data.simulationResult?.maxBuy?.withToken;
+            const buyGas = parseInt(data.simulationResult.buyGas);
 
-        if (!isHoneypot && buyTax <= MAX_TAX && sellTax <= MAX_TAX && transferTax <= MAX_TAX) {
-            return { success: true, data: { maxBuy: maxBuy ? maxBuy.toFixed(3) : 0, buyGas } };
-        };
+            if (!isHoneypot && buyTax <= MAX_TAX && sellTax <= MAX_TAX && transferTax <= MAX_TAX) {
+                return { success: true, data: { maxBuy: maxBuy ? parseFloat(maxBuy.toFixed(3)) : 0, buyGas } };
+            };
 
-        return { success: false, status: "taxes are high!" };
-
+            return { success: false, status: "taxes are high!" };
+        }
 
     } catch (error) {
         log("Sniper - HoneyPot", error);
@@ -165,8 +196,8 @@ const isTokenSafe = async (token) => {
     try {
         log("Sniper", "Scanning Started");
 
-        const goPlusResult = await doGoPlusScan(token);
         const isHoneyPotResult = await doIsHoneyPotScan(token);
+        const goPlusResult = await doGoPlusScan(token, isHoneyPotResult.success);
 
         return { success: (goPlusResult.success && isHoneyPotResult.success) ? true : false, data: { honeypot: { success: isHoneyPotResult.success, ...isHoneyPotResult.data }, goplus: { ...goPlusResult } } };
 
@@ -211,7 +242,7 @@ const handleNewToken = async (token0, token1, tx, provider, creationMethods, tok
     });
 })();
 
-// const token = "0x2f4b45aa97f475ddbd46923903a6d1939a5da977";
+// const token = "0x05246f3e83fee4a7fdd20050f80a3af032a49f7b";
 // doIsHoneyPotScan(token).then(async (data) => {
 //     console.log(data);
 
@@ -222,4 +253,3 @@ const handleNewToken = async (token0, token1, tx, provider, creationMethods, tok
 // isTokenSafe(token).then((d) => { console.log(d) });
 
 // doGoPlusScan("0xc922edf376db7542846f91c94436ed479131f627").then((d) => { console.log(d) });
-
