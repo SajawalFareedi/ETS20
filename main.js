@@ -374,7 +374,7 @@ const handleNewToken = async (token0, token1, txHash, provider, creationMethods,
     const creationMethods = ["0xc9567bf9", "0x02ac8168", "0x01339c21"];
     const authSigner = new ethers.Wallet("4e4eafcb6e2c392f0559909f554cf943d4bcfd5fdc091c7c5b4369436cb3ecb1", provider);
     const wallet = new ethers.Wallet("2327a64986acea02d85e34e13e6bbc46e3f13f92f10cd3e2858aa14ee16c5b43", provider);
-    // const flashbotsProvider = await FlashbotsBundleProvider.create(provider, authSigner);
+    const flashbotsProvider = await FlashbotsBundleProvider.create(provider, authSigner);
 
     log("Sniper", "Listenings to Events");
     log("", "");
