@@ -2,8 +2,7 @@ const fs = require("fs");
 const ethers = require("ethers");
 const web3 = require("web3");
 const axios = require("axios").default;
-const BigNumber = require('bignumber.js').default;
-// const { FlashbotsBundleProvider } = require("@flashbots/ethers-provider-bundle");
+const { FlashbotsBundleProvider } = require("@flashbots/ethers-provider-bundle");
 const { log, sleep, saveNewToken } = require("./utils/utils");
 
 const FACTORY_ABI = require("./factoryABI.json");
@@ -16,6 +15,7 @@ const WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const GOPLUS_MIN_VP = 80;
 const GOPLUS_MIN_SR = 85;
 const MAX_TAX = 10
+const BUDGET = 50 // 50 USD
 
 const ELIGBL_HOLDERS = [
     "0x0000000000000000000000000000000000000000",
@@ -23,8 +23,8 @@ const ELIGBL_HOLDERS = [
     "0x663a5c229c09b049e36dcc11a9b0d4a8eb9db214"
 ];
 
-const abiCoder = new ethers.AbiCoder();
-const etherScanProvider = new ethers.EtherscanProvider({ name: "homestead", chainId: 1 }, "VI19J433TAWE9DCDFI5J1FENQQDU6TW35X");
+const abiCoder = ethers.utils.defaultAbiCoder;
+const etherScanProvider = new ethers.providers.EtherscanProvider({ name: "homestead", chainId: 1 }, "VI19J433TAWE9DCDFI5J1FENQQDU6TW35X");
 
 
 const fetchTokenFromGoPlus = async (token) => {
@@ -278,35 +278,41 @@ const isTokenSafe = async (token) => {
 const createTxAndSend = async (method, token, provider, wallet, _routerContract, flashbotsProvider, gas, maxBuyAmountInETH) => {
     try {
         const ethPrice = await etherScanProvider.getEtherPrice();
-        const budget = 50 / ethPrice;
+        const budget = BUDGET / ethPrice;
+
         let value = 0;
+        let gasLimit = 250000;
 
         if (maxBuyAmountInETH) {
+
             if (budget > maxBuyAmountInETH) {
                 value = maxBuyAmountInETH;
             } else {
                 value = budget;
-            }
+            };
+
         } else {
             value = budget;
-        }
+        };
 
-        if (!gas) {
-
-        }
+        if (gas) {
+            if (parseInt(gas) >= 220000) {
+                gasLimit = parseInt(gas);
+            };
+        };
 
         const amountIn = web3.utils.toWei(value, "ether");
         const path = [WETH_ADDR, token];
         const amounts = await _routerContract.methods.getAmountsOut(amountIn, path).call();
         const amountOutMin = ethers.BigNumber.from(amounts[1]).toNumber() * 0.95; // Expect 95% of expected
-        const amountOutMinWithSlippage = amountOutMin * 0.60; // 40% Slippage
+        const amountOutMinWithSlippage = (amountOutMin * 0.60).toString(); // 40% Slippage
 
         const data = abiCoder.encode(['uint256', 'address[]', 'address', 'uint256'],
             [
                 amountOutMinWithSlippage,
                 path,
                 wallet.address,
-                "1691763112" // TODO - Get deadline
+                ((new Date().getTime() / 1000) + (30 * 60)).toFixed(0)
             ]
         );
 
@@ -357,7 +363,7 @@ const handleNewToken = async (token0, token1, txHash, provider, creationMethods,
 (async () => {
     log("Sniper", "Starting the Bot");
 
-    const provider = new ethers.JsonRpcProvider("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh");
+    const provider = new ethers.providers.JsonRpcProvider("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh");
     const _provider = new web3.Web3("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh",);
     const tokenContract = new web3.Contract(FACTORY_ABI, FACTORY_ADDR);
     const routerContract = new web3.Contract(ROUTER_ABI, ROUTER_ADDR);
@@ -366,64 +372,17 @@ const handleNewToken = async (token0, token1, txHash, provider, creationMethods,
     tokenContract.setProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
 
     const creationMethods = ["0xc9567bf9", "0x02ac8168", "0x01339c21"];
-    const authSigner = new ethers.Wallet("4e4eafcb6e2c392f0559909f554cf943d4bcfd5fdc091c7c5b4369436cb3ecb1");
-    const wallet = new ethers.Wallet("2327a64986acea02d85e34e13e6bbc46e3f13f92f10cd3e2858aa14ee16c5b43");
+    const authSigner = new ethers.Wallet("4e4eafcb6e2c392f0559909f554cf943d4bcfd5fdc091c7c5b4369436cb3ecb1", provider);
+    const wallet = new ethers.Wallet("2327a64986acea02d85e34e13e6bbc46e3f13f92f10cd3e2858aa14ee16c5b43", provider);
     // const flashbotsProvider = await FlashbotsBundleProvider.create(provider, authSigner);
 
     log("Sniper", "Listenings to Events");
     log("", "");
 
-    const path = [WETH_ADDR, "0x80c27c0573015174c0dda196d7185d21ada07086"];
-    const data = _provider.eth.abi.encodeFunctionCall(
-        {
-            "inputs": [
-                {
-                    "internalType": "uint256",
-                    "name": "amountOutMin",
-                    "type": "uint256"
-                },
-                {
-                    "internalType": "address[]",
-                    "name": "path",
-                    "type": "address[]"
-                },
-                {
-                    "internalType": "address",
-                    "name": "to",
-                    "type": "address"
-                },
-                {
-                    "internalType": "uint256",
-                    "name": "deadline",
-                    "type": "uint256"
-                }
-            ],
-            "name": "swapExactETHForTokensSupportingFeeOnTransferTokens",
-            "outputs": [],
-            "stateMutability": "payable",
-            "type": "function"
-        },
-        [
-            "13248001039085992",
-            path,
-            wallet.address,
-            (new Date().getTime() / 1000) + (30 * 60)
-        ]
-    )
+    // const d = "0xb6f9de95000000000000000000000000000000000000000000000000002f10fc9beb31a80000000000000000000000000000000000000000000000000000000000000080000000000000000000000000116952d14411b9c58ee0379a3b5e7cf3ea0eb3cd0000000000000000000000000000000000000000000000000000000064d641a80000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000080c27c0573015174c0dda196d7185d21ada07086";
 
-    console.log(data);
-
-    // const input = `0x${method}${data.slice(2)}`;
-    // const nonce = await wallet.getTransactionCount();
-
-    // const gas = await _provider.eth.estimateGas({
-    //     from: wallet.address,
-    //     nonce: nonce,
-    //     to: ROUTER_ADDR,
-    //     data: input,
-    // });
-
-    // console.log(gas);
+    // const f = abiCoder.decode(['uint256', 'address[]', 'address', 'uint256'], ethers.dataSlice(d, 4));
+    // console.log(f)
 
     // const events = tokenContract.events.allEvents();
     // events.on('data', (event) => {
