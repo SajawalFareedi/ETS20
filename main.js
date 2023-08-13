@@ -1,15 +1,33 @@
 const fs = require("fs");
 const ethers = require("ethers");
+const web3 = require("web3");
 const axios = require("axios").default;
+const BigNumber = require('bignumber.js').default;
+// const { FlashbotsBundleProvider } = require("@flashbots/ethers-provider-bundle");
 const { log, sleep, saveNewToken } = require("./utils/utils");
 
-const ABI = require("./factoryABI.json");
+const FACTORY_ABI = require("./factoryABI.json");
+const ROUTER_ABI = require("./routerABI.json");
+
+const FACTORY_ADDR = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
+const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
+const WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
 const GOPLUS_MIN_VP = 80;
 const GOPLUS_MIN_SR = 85;
 const MAX_TAX = 10
 
+const ELIGBL_HOLDERS = [
+    "0x0000000000000000000000000000000000000000",
+    "0x000000000000000000000000000000000000dead",
+    "0x663a5c229c09b049e36dcc11a9b0d4a8eb9db214"
+];
 
-const doGoPlusScan = async (token, notHoneypot) => {
+const abiCoder = new ethers.AbiCoder();
+const etherScanProvider = new ethers.EtherscanProvider({ name: "homestead", chainId: 1 }, "VI19J433TAWE9DCDFI5J1FENQQDU6TW35X");
+
+
+const fetchTokenFromGoPlus = async (token) => {
     try {
         const headers = {
             authority: "api.gopluslabs.io",
@@ -36,18 +54,32 @@ const doGoPlusScan = async (token, notHoneypot) => {
             try {
                 res = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=${token}`, { headers: headers });
 
-                if (res.data.result[token].buy_tax.length !== 0 || x >= 3) {
+                if (res.data.result[token].buy_tax.length !== 0 || x >= 5) {
                     break;
                 }
 
-                await sleep(1);
+                await sleep(2);
 
                 x += 1;
+
             } catch (error) {
 
-            }
-        }
+            };
+        };
 
+        return res;
+
+    } catch (error) {
+        log("Sniper - GoPlus", error);
+    }
+
+    return { status: 500 };
+}
+
+const doGoPlusScan = async (token) => {
+    try {
+
+        const res = await fetchTokenFromGoPlus(token);
         const keys = JSON.parse(fs.readFileSync("keys.json", { encoding: "utf8" }));
 
         let score = 0;
@@ -66,13 +98,6 @@ const doGoPlusScan = async (token, notHoneypot) => {
 
                         for (let x = 0; x < data.lp_holders.length; x++) {
                             const holder = data.lp_holders[x];
-                            // const eligibleHolders = [
-                            //     "0x0000000000000000000000000000000000000000",
-                            //     "0x000000000000000000000000000000000000dead",
-                            //     "0x663a5c229c09b049e36dcc11a9b0d4a8eb9db214"
-                            // ];
-
-                            // eligibleHolders.includes(holder.address.toLowerCase()) && 
 
                             if (holder.is_locked == 1) {
                                 totalHoldings += parseFloat(holder.percent);
@@ -95,7 +120,7 @@ const doGoPlusScan = async (token, notHoneypot) => {
                     if (parseFloat(data[_key]) <= 0.05) {
                         vip_points += 1
                     }
-                    
+
                 } else if (_key === "slippage_modifiable") {
 
                     if (data[_key] === "0") {
@@ -113,10 +138,6 @@ const doGoPlusScan = async (token, notHoneypot) => {
 
         score = (score / (keys.length - 6)) * 100;
         vip_score = (vip_points / 6) * 100;
-
-        // if (notHoneypot && vip_score < 40) {
-        //     return await doGoPlusScan(token, notHoneypot);
-        // }
 
         return { success: (score >= GOPLUS_MIN_SR && vip_score >= GOPLUS_MIN_VP) ? true : false, score: parseInt(score), vip_score: parseInt(vip_score) };
 
@@ -195,9 +216,57 @@ const isTokenSafe = async (token) => {
         log("Sniper", "Scanning Started");
 
         const isHoneyPotResult = await doIsHoneyPotScan(token);
-        const goPlusResult = await doGoPlusScan(token, isHoneyPotResult.success);
+        const goPlusResult = await doGoPlusScan(token);
 
-        return { success: (goPlusResult.success && isHoneyPotResult.success) ? true : false, data: { honeypot: { success: isHoneyPotResult.success, ...isHoneyPotResult.data }, goplus: { ...goPlusResult } } };
+        let result = {
+            success: (goPlusResult.success && isHoneyPotResult.success) ? true : false,
+            data: {
+                honeypot: { success: isHoneyPotResult.success, ...isHoneyPotResult.data },
+                goplus: { ...goPlusResult }
+            }
+        };
+
+        if (result.success) {
+            let waitTime = 0;
+
+            while (true) {
+                const res = await fetchTokenFromGoPlus(token);
+
+                if (res.status == 200) {
+                    const data = res.data.result[token];
+
+                    if (ELIGBL_HOLDERS.includes(data.owner_address)) {
+                        if (parseFloat(data.creator_percent) <= 0.05) {
+                            if (data.lp_holders) {
+                                let totalHoldings = 0;
+
+                                for (let x = 0; x < data.lp_holders.length; x++) {
+                                    const holder = data.lp_holders[x];
+
+                                    if (holder.is_locked == 1) {
+                                        totalHoldings += parseFloat(holder.percent);
+                                    }
+                                }
+
+                                if (totalHoldings >= 0.95) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (waitTime >= 600) {
+                    result = { success: false, data: {} };
+                    break;
+                }
+
+                await sleep(5);
+                waitTime += 5
+            }
+        }
+
+        return result;
 
     } catch (error) {
         log("Sniper - isTokenSafe", error);
@@ -206,20 +275,81 @@ const isTokenSafe = async (token) => {
     return { success: false, data: {} };
 };
 
-const handleNewToken = async (token0, token1, tx, provider, creationMethods, tokenContract) => {
-    const { data } = await provider.getTransaction(tx.transactionHash);
+const createTxAndSend = async (method, token, provider, wallet, _routerContract, flashbotsProvider, gas, maxBuyAmountInETH) => {
+    try {
+        const ethPrice = await etherScanProvider.getEtherPrice();
+        const budget = 50 / ethPrice;
+        let value = 0;
+
+        if (maxBuyAmountInETH) {
+            if (budget > maxBuyAmountInETH) {
+                value = maxBuyAmountInETH;
+            } else {
+                value = budget;
+            }
+        } else {
+            value = budget;
+        }
+
+        if (!gas) {
+
+        }
+
+        const amountIn = web3.utils.toWei(value, "ether");
+        const path = [WETH_ADDR, token];
+        const amounts = await _routerContract.methods.getAmountsOut(amountIn, path).call();
+        const amountOutMin = ethers.BigNumber.from(amounts[1]).toNumber() * 0.95; // Expect 95% of expected
+        const amountOutMinWithSlippage = amountOutMin * 0.60; // 40% Slippage
+
+        const data = abiCoder.encode(['uint256', 'address[]', 'address', 'uint256'],
+            [
+                amountOutMinWithSlippage,
+                path,
+                wallet.address,
+                "1691763112" // TODO - Get deadline
+            ]
+        );
+
+        const input = `0x${method}${data.slice(2)}`;
+
+        const finalTx = {};
+        const gasPrice = (await provider.getGasPrice()).toString();
+        const nonce = await provider.getTransactionCount(wallet.address);
+
+        finalTx["from"] = wallet.address;
+        finalTx["to"] = ROUTER_ADDR;
+        finalTx["nonce"] = nonce;
+        finalTx["gasLimit"] = gasLimit;
+        finalTx["gasPrice"] = parseInt(gasPrice) + 2000000000;
+        finalTx["data"] = input;
+        finalTx["value"] = ethers.utils.parseEther(value);
+        // finalTx["maxPriorityFeePerGas"]
+        // finalTx["maxFeePerGas"]
+    } catch (error) {
+        log("Sniper - TX", error);
+    }
+}
+
+const handleNewToken = async (token0, token1, txHash, provider, creationMethods, routerContract, wallet, flashbotsProvider) => {
+    const { data } = await provider.getTransaction(txHash);
 
     if (creationMethods.includes(data)) {
         const token = token1.toLowerCase().endsWith("83c756cc2") ? token0.toLowerCase() : token1.toLowerCase();
 
         log("Sniper", "PairCreated: " + token);
 
-        await sleep(5);
+        await sleep(30); // Wait for the token to sync on the EVM
+
         const { success, data } = await isTokenSafe(token);
-
-        console.log(token, data);
-
         const time = new Date().toLocaleString();
+
+        console.log(`[${time}] [${token}] [${success}]`, data);
+
+        if (success) {
+            const result = await createTxAndSend("b6f9de95", token, provider, wallet, routerContract, flashbotsProvider, data.honeypot.buyGas, data.honeypot.maxBuy);
+        }
+
+
         saveNewToken(`token.json`, { time, token, ...data });
     };
 };
@@ -227,17 +357,79 @@ const handleNewToken = async (token0, token1, tx, provider, creationMethods, tok
 (async () => {
     log("Sniper", "Starting the Bot");
 
-    const factoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
-    const provider = new ethers.providers.WebSocketProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
-    const tokenContract = new ethers.Contract(factoryAddress, ABI, provider);
-    const creationMethods = ["0xc9567bf9", "0x02ac8168"]
+    const provider = new ethers.JsonRpcProvider("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh");
+    const _provider = new web3.Web3("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh",);
+    const tokenContract = new web3.Contract(FACTORY_ABI, FACTORY_ADDR);
+    const routerContract = new web3.Contract(ROUTER_ABI, ROUTER_ADDR);
+
+    routerContract.setProvider("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh");
+    tokenContract.setProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
+
+    const creationMethods = ["0xc9567bf9", "0x02ac8168", "0x01339c21"];
+    const authSigner = new ethers.Wallet("4e4eafcb6e2c392f0559909f554cf943d4bcfd5fdc091c7c5b4369436cb3ecb1");
+    const wallet = new ethers.Wallet("2327a64986acea02d85e34e13e6bbc46e3f13f92f10cd3e2858aa14ee16c5b43");
+    // const flashbotsProvider = await FlashbotsBundleProvider.create(provider, authSigner);
 
     log("Sniper", "Listenings to Events");
     log("", "");
 
-    tokenContract.on("PairCreated", (token0, token1, pair, noname, tx) => {
-        handleNewToken(token0, token1, tx, provider, creationMethods, tokenContract);
-    });
+    const path = [WETH_ADDR, "0x80c27c0573015174c0dda196d7185d21ada07086"];
+    const data = _provider.eth.abi.encodeFunctionCall(
+        {
+            "inputs": [
+                {
+                    "internalType": "uint256",
+                    "name": "amountOutMin",
+                    "type": "uint256"
+                },
+                {
+                    "internalType": "address[]",
+                    "name": "path",
+                    "type": "address[]"
+                },
+                {
+                    "internalType": "address",
+                    "name": "to",
+                    "type": "address"
+                },
+                {
+                    "internalType": "uint256",
+                    "name": "deadline",
+                    "type": "uint256"
+                }
+            ],
+            "name": "swapExactETHForTokensSupportingFeeOnTransferTokens",
+            "outputs": [],
+            "stateMutability": "payable",
+            "type": "function"
+        },
+        [
+            "13248001039085992",
+            path,
+            wallet.address,
+            (new Date().getTime() / 1000) + (30 * 60)
+        ]
+    )
+
+    console.log(data);
+
+    // const input = `0x${method}${data.slice(2)}`;
+    // const nonce = await wallet.getTransactionCount();
+
+    // const gas = await _provider.eth.estimateGas({
+    //     from: wallet.address,
+    //     nonce: nonce,
+    //     to: ROUTER_ADDR,
+    //     data: input,
+    // });
+
+    // console.log(gas);
+
+    // const events = tokenContract.events.allEvents();
+    // events.on('data', (event) => {
+    //     handleNewToken(event.returnValues.token0, event.returnValues.token1, event.transactionHash, provider, creationMethods, routerContract, wallet, flashbotsProvider);
+    // });
+
 })();
 
 // const token = "0x05246f3e83fee4a7fdd20050f80a3af032a49f7b";
@@ -248,6 +440,6 @@ const handleNewToken = async (token0, token1, tx, provider, creationMethods, tok
 //     console.log(d);
 // });
 
-// isTokenSafe(token).then((d) => { console.log(d) });
+// isTokenSafe("0x84533168ed633266397f565f433339a9c703394c").then((d) => { console.log(d) });
 
 // doGoPlusScan("0xc922edf376db7542846f91c94436ed479131f627").then((d) => { console.log(d) });
