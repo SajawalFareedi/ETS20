@@ -5,6 +5,7 @@ const axios = require("axios").default;
 const { FlashbotsBundleProvider } = require("@flashbots/ethers-provider-bundle");
 const { log, sleep, saveNewToken } = require("./utils/utils");
 
+
 const FACTORY_ABI = require("./factoryABI.json");
 const ROUTER_ABI = require("./routerABI.json");
 
@@ -17,15 +18,19 @@ const GOPLUS_MIN_SR = 85; // 85%
 
 const MAX_GAS_FEES = 30 * (10 ** 9); // 30 Gwei
 const EXTRA_GAS_FEES = 0 // 3 * (10 ** 9); // 3 Gwei
+const GAS_LIMIT = 400000
 
 const MAX_TAX = 10; // 10%
 const BUDGET = 10; // 50 USD
+const MIN_USD_BALANCE = 70;
 
 const ELIGBL_HOLDERS = [
     "0x0000000000000000000000000000000000000000",
     "0x000000000000000000000000000000000000dead",
     "0x663a5c229c09b049e36dcc11a9b0d4a8eb9db214"
 ];
+
+let BUY_ENABLED = true;
 
 const abiCoder = ethers.utils.defaultAbiCoder;
 const etherScanProvider = new ethers.providers.EtherscanProvider({ name: "homestead", chainId: 1 }, "VI19J433TAWE9DCDFI5J1FENQQDU6TW35X");
@@ -279,115 +284,142 @@ const isTokenSafe = async (token) => {
     return { success: false, data: {} };
 };
 
-const createBuyTxAndSend = async (token, provider, wallet, routerContract, flashbotsProvider, gas, maxBuyAmountInETH) => {
+const createBuyTxAndSend = async (token, provider, wallet, gas, maxBuyAmountInETH) => {
     try {
-        let value = 0;
-        let gasLimit = 400000;
-        const gasPrice = parseInt((await provider.getGasPrice()).toString()) + EXTRA_GAS_FEES;
+        if (BUY_ENABLED) {
+            let value = 0;
+            let gasLimit = GAS_LIMIT;
+            const gasPrice = parseInt((await provider.getGasPrice()).toString()) + EXTRA_GAS_FEES;
 
-        if (gasPrice > MAX_GAS_FEES) {
-            return { success: false, reason: "Gas price is too high!" };
-        };
+            if (gasPrice > MAX_GAS_FEES) {
+                return { success: false, reason: `Failed to Buy Token because of High Gas Price! GasPrice: ${gasPrice}` };
+            };
 
-        const ethPrice = await etherScanProvider.getEtherPrice();
-        const budget = BUDGET / ethPrice;
+            const ethPrice = await etherScanProvider.getEtherPrice();
+            const budget = BUDGET / ethPrice;
 
-        if (maxBuyAmountInETH) {
+            if (maxBuyAmountInETH) {
 
-            if (budget > maxBuyAmountInETH) {
-                value = maxBuyAmountInETH;
+                if (budget > maxBuyAmountInETH) {
+                    value = maxBuyAmountInETH;
+                } else {
+                    value = budget;
+                };
+
             } else {
                 value = budget;
             };
 
-        } else {
-            value = budget;
-        };
-
-        if (gas) {
-            if (parseInt(gas) > 400000) {
-                gasLimit = parseInt(gas);
+            if (gas) {
+                if (parseInt(gas) > GAS_LIMIT) {
+                    gasLimit = parseInt(gas);
+                };
             };
+
+            const amountIn = web3.utils.toWei(value, "ether");
+            const path = [WETH_ADDR, token];
+            const amounts = await routerContract.methods.getAmountsOut(amountIn, path).call();
+            const expectedBuyingPrice = (parseInt(ethers.BigNumber.from(amounts[0]).toString()) / parseInt(ethers.BigNumber.from(amounts[1]).toString())) * ethPrice;
+
+            const amountOutMinWithSlippage = "0";
+
+            const data = abiCoder.encode(['uint256', 'address[]', 'address', 'uint256'],
+                [
+                    amountOutMinWithSlippage,
+                    path,
+                    wallet.address,
+                    ((new Date().getTime() / 1000) + (30 * 60)).toFixed(0)
+                ]
+            );
+
+            value = ethers.utils.parseEther(value.toFixed(6));
+            const input = `0xb6f9de95${data.slice(2)}`;
+            const nonce = await provider.getTransactionCount(wallet.address);
+            const finalTx = {};
+
+            finalTx["from"] = wallet.address;
+            finalTx["to"] = ROUTER_ADDR;
+            finalTx["nonce"] = nonce;
+            finalTx["gasLimit"] = gasLimit;
+            finalTx["gasPrice"] = gasPrice;
+            finalTx["data"] = input;
+            finalTx["value"] = value;
+
+            const walletBalance = await wallet.getBalance();
+            const ethAvailable = parseInt((walletBalance.toString())) / (10 ** 18);
+            const usdAvailable = ethAvailable / ethPrice;
+
+            if (usdAvailable >= MIN_USD_BALANCE) {
+                if (BUY_ENABLED) {
+                    const signedTx = await wallet.signTransaction(finalTx);
+                    const txRes = await provider.sendTransaction(signedTx);
+
+                    log("Sniper", `Sent Buy Transaction - Token: ${token} - Tx: https://etherscan.io/tx/${txRes.hash}`);
+
+                    return { success: true, receipt: txRes, price: expectedBuyingPrice };
+                };
+            } else {
+                return { success: false, reason: "Balance is low!" };
+            }
         };
 
-        // const amountIn = web3.utils.toWei(value, "ether");
-        const path = [WETH_ADDR, token];
-        // const amounts = await routerContract.methods.getAmountsOut(amountIn, path).call();
-        // const amountOutMin = parseInt(ethers.BigNumber.from(amounts[1]).toString()) * 0.95; // Expect 95% of expected
-        // let amountOutMinWithSlippage = (amountOutMin * 0.60).toFixed(0); // 40% Slippage
-
-        // console.log(amountOutMinWithSlippage)
-
-        // if (amountOutMinWithSlippage.length > 18) {
-        //     amountOutMinWithSlippage = (parseInt(amountOutMinWithSlippage) / (10 ** 18)).toFixed(0);
-        // } else {
-        //     amountOutMinWithSlippage = (parseInt(amountOutMinWithSlippage) / (10 ** 9)).toFixed(0);
-        // }
-
-        // console.log(amountOutMinWithSlippage);
-        const amountOutMinWithSlippage = "0";
-
-        const data = abiCoder.encode(['uint256', 'address[]', 'address', 'uint256'],
-            [
-                amountOutMinWithSlippage,
-                path,
-                wallet.address,
-                ((new Date().getTime() / 1000) + (30 * 60)).toFixed(0)
-            ]
-        );
-
-        value = ethers.utils.parseEther(value.toFixed(6));
-        const input = `0xb6f9de95${data.slice(2)}`;
-        const nonce = await provider.getTransactionCount(wallet.address);
-        const finalTx = {};
-
-        finalTx["from"] = wallet.address;
-        finalTx["to"] = ROUTER_ADDR;
-        finalTx["nonce"] = nonce;
-        finalTx["gasLimit"] = gasLimit;
-        finalTx["gasPrice"] = gasPrice;
-        finalTx["data"] = input;
-        finalTx["value"] = value;
-
-        const signedTx = await wallet.signTransaction(finalTx);
-        const txRes = await provider.sendTransaction(signedTx);
-
-        log("Sniper", `Sent Buy Transaction - Token: ${token} - Tx: https://etherscan.io/tx/${txRes.hash}`);
-
-        return { success: true, receipt: txRes };
+        return { success: false, reason: "Buying is disabled" };
 
     } catch (error) {
-        log("Sniper - TX - Error", "");
+        log("Sniper - BTX - Error", "");
         console.trace(error);
     }
 
-    return { success: false, reason: "An error occoured!" };
+    return { success: false };
+};
+
+const sellCronStart = async (tx, token, buyingPrice) => {
+    try {
+        const receipt = await tx.wait();
+
+        if (receipt.status == 0) {
+            log("Sniper", `Buy Transaction Failed - Token: ${token} - Tx: https://etherscan.io/tx/${receipt.hash}`);
+            return;
+        };
+
+        BUY_ENABLED = false;
+
+        const time = new Date().toLocaleString();
+        saveNewToken("tokenBought.json", { time, token, buyingPrice });
+
+        
+
+    } catch (error) {
+        log("Sniper - STX - Error", "");
+        console.trace(error);
+    }
 }
 
-const handleNewToken = async (token0, token1, txHash, provider, creationMethods, routerContract, wallet, flashbotsProvider) => {
-    const { data } = await provider.getTransaction(txHash);
+const handleNewToken = async (token0, token1, txHash, provider, creationMethods, routerContract, wallet) => {
+    if (BUY_ENABLED) {
+        const { data } = await provider.getTransaction(txHash);
 
-    if (creationMethods.includes(data)) {
-        const token = token1.toLowerCase().endsWith("83c756cc2") ? token0.toLowerCase() : token1.toLowerCase();
+        if (creationMethods.includes(data)) {
+            const token = token1.toLowerCase().endsWith("83c756cc2") ? token0.toLowerCase() : token1.toLowerCase();
 
-        log("Sniper", "PairCreated: " + token);
+            log("Sniper", "PairCreated: " + token);
 
-        await sleep(30); // Wait for the token to sync on the EVM
+            await sleep(30); // Wait for the token to sync on the EVM
 
-        const { success, data } = await isTokenSafe(token);
-        const time = new Date().toLocaleString();
+            const { success, data } = await isTokenSafe(token);
+            const time = new Date().toLocaleString();
 
-        console.log(`[${time}] [${token}] [${success}]`, data);
+            console.log(`[${time}] [${token}] [${success}]`, data);
 
-        if (success) {
-            const result = await createBuyTxAndSend(token, provider, wallet, routerContract, flashbotsProvider, data.honeypot.buyGas, data.honeypot.maxBuy);
             if (success) {
-
-            }
-        }
-
-
-        saveNewToken(`token.json`, { time, token, ...data });
+                const result = await createBuyTxAndSend(token, provider, wallet, data.honeypot.buyGas, data.honeypot.maxBuy);
+                if (result.success) {
+                    sellCronStart(result.receipt, token, result.price);
+                } else {
+                    if (result.reason) { log("Sniper", result.reason) };
+                };
+            };
+        };
     };
 };
 
@@ -395,7 +427,7 @@ const handleNewToken = async (token0, token1, txHash, provider, creationMethods,
     log("Sniper", "Starting the Bot");
 
     const provider = new ethers.providers.JsonRpcProvider("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh");
-    // const _provider = new web3.Web3("https://eth-mainnet.g.alchemy.com/v2/FQtGVKbgl4O-HeVlqKBnC-QGxsH4SKMh",);
+
     const factoryContract = new web3.Contract(FACTORY_ABI, FACTORY_ADDR);
     const routerContract = new web3.Contract(ROUTER_ABI, ROUTER_ADDR);
 
@@ -403,38 +435,21 @@ const handleNewToken = async (token0, token1, txHash, provider, creationMethods,
     factoryContract.setProvider("wss://eth-mainnet.g.alchemy.com/v2/54T0kbEeD4z8JqKzZE4jjKt2zdtSs1bg");
 
     const creationMethods = ["0xc9567bf9", "0x02ac8168", "0x01339c21"];
-    const authSigner = new ethers.Wallet("4e4eafcb6e2c392f0559909f554cf943d4bcfd5fdc091c7c5b4369436cb3ecb1", provider);
     const wallet = new ethers.Wallet("2327a64986acea02d85e34e13e6bbc46e3f13f92f10cd3e2858aa14ee16c5b43", provider);
-    const flashbotsProvider = await FlashbotsBundleProvider.create(provider, authSigner);
 
     log("Sniper", "Listenings to Events");
     log("", "");
 
-    const token = "0x175fE43259fBC8F0Ae3e3E7E70cCd53e292706FC".toLowerCase();
-    await createBuyTxAndSend(token, provider, wallet, routerContract, flashbotsProvider, 234467, undefined);
-
-    // console.log(5.40800e15 == 5408000000000000)
+    // const token = "0x175fE43259fBC8F0Ae3e3E7E70cCd53e292706FC".toLowerCase();
+    // await createBuyTxAndSend(token, provider, wallet, routerContract, flashbotsProvider, 234467, undefined);
 
     // const data = "0xb6f9de9500000000000000000000000000000000000000000000001a852d000b34b900000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000c366ebb04e251b0f8bc46468639e9008da8e9c570000000000000000000000000000000000000000000000000000000064d8e60d0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000175fe43259fbc8f0ae3e3e7e70ccd53e292706fc"
 
     // const d = abiCoder.decode(['uint256', 'address[]', 'address', 'uint256'], ethers.utils.hexDataSlice(data, 4));
     // console.log(d[0].toNumber())
 
-    // const events = factoryContract.events.allEvents();
-    // events.on('data', (event) => {
-    //     handleNewToken(event.returnValues.token0, event.returnValues.token1, event.transactionHash, provider, creationMethods, routerContract, wallet, flashbotsProvider);
-    // });
-
+    const events = factoryContract.events.allEvents();
+    events.on('data', (event) => {
+        handleNewToken(event.returnValues.token0, event.returnValues.token1, event.transactionHash, provider, creationMethods, routerContract, wallet, flashbotsProvider);
+    });
 })();
-
-// const token = "0x05246f3e83fee4a7fdd20050f80a3af032a49f7b";
-// doIsHoneyPotScan(token).then(async (data) => {
-//     console.log(data);
-
-//     const d = await doGoPlusScan(token);
-//     console.log(d);
-// });
-
-// isTokenSafe("0x84533168ed633266397f565f433339a9c703394c").then((d) => { console.log(d) });
-
-// doGoPlusScan("0xc922edf376db7542846f91c94436ed479131f627").then((d) => { console.log(d) });
