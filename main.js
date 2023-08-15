@@ -5,10 +5,10 @@ const axios = require("axios").default;
 const prompt = require("prompt-sync")({ sigint: true });
 const { log, sleep, saveNewToken } = require("./utils/utils");
 
-const FACTORY_ABI = require("./factoryABI.json");
-const ROUTER_ABI = require("./routerABI.json");
-const PAIR_ABI = require("./pairABI.json");
-const ERC20_ABI = require("./erc20ABI.json");
+const FACTORY_ABI = require("./ABIs/factoryABI.json");
+const ROUTER_ABI = require("./ABIs/routerABI.json");
+const PAIR_ABI = require("./ABIs/pairABI.json");
+const ERC20_ABI = require("./ABIs/erc20ABI.json");
 
 const FACTORY_ADDR = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
