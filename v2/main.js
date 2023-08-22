@@ -501,7 +501,7 @@ const sellCronStart = async (tx, token, buyingPrice, pairAddr, decimals) => {
                 tokenReserve = reserve0 < reserve1 ? reserve1 / (10 ** decimals) : reserve0 / (10 ** decimals);
                 wethReserve = reserve0 < reserve1 ? reserve0 / (10 ** 18) : reserve1 / (10 ** 18);
             }
-            
+
             const currentPrice = (wethReserve / tokenReserve) * ethPrice;
 
             if (wethReserve < 0.1) {
